@@ -3,7 +3,7 @@ import "./Forwarder.sol";
 
 /**
 *
-* WalletSimple
+* SimpleWallet
 * ============
 *
 * Basic multi-signer wallet designed for use in a co-signing environment where 2 signatures are required to move funds.
@@ -28,11 +28,9 @@ import "./Forwarder.sol";
 *
 */
 
-// @title WalletSimple
-// @author Toniya Sundaram <toniya.sundaram@gmail.com> & Terry Wilkinson <tawilkster@gmail.com>
-
-contract WalletSimple {
+contract SimpleWallet {
     // Events
+    event ForwardContract(address forwardContract,uint256 addressSeq,uint256 currentBlock,address contractOwner);
     event Deposited(address from, uint256 value, bytes data);
     event Verified(address msgSender);
     event SafeModeActivated(address msgSender);
@@ -49,14 +47,17 @@ contract WalletSimple {
 
     // Public fields
     mapping(address => Signer) public signers; // The addresses that can co-sign transactions on the wallet
-    
+    mapping(address => bool) public forwarderAddress; //A map to keep track of the
+
     struct Signer {
         bool allowed; // flag to set when the signing address is allowed
         bool verified; // flag to set when the signing address has verified itself to prove ownership of the account
     }
 
-    bool public safeMode = false; // When active, wallet may only send to signer addresses
-    
+    bool public safeMode = false; // when active, wallet may only send to signer addresses
+    address public forwardContract; //to store the forwardContract address for the current instance
+    uint256 public addressId; // this keeps tracks of the number of address created for Forwarder contract
+
     // Private fields
     uint256 private sequenceId; // the current sequence ID of all transactions on this contract (counts up for every new transaction)
 
@@ -64,9 +65,8 @@ contract WalletSimple {
     * A simple multi-sig wallet by specifying the signers allowed to be used on this wallet.
     * 2 signers will be required to send a transaction from this wallet.
     * Note: The contract deployer is NOT automatically added to the list of signers.
-    * 
     *
-    * @param allowedSigners An array of signers on the wallet
+    * @param _allowedSigners An array of signers on the wallet
     */
     constructor(address[] _allowedSigners) public {
         // 4 signers, 2 hot and 2 cold, if one or both of the hot signers are compromised (or priv keys are lost) use cold signers to transfer signership
@@ -91,7 +91,7 @@ contract WalletSimple {
     function() public payable {
         if (msg.value > 0) {
             // Fire deposited event if we are receiving funds
-            Deposited(msg.sender, msg.value, msg.data);
+            emit Deposited(msg.sender, msg.value, msg.data);
         }
     }
 
@@ -101,19 +101,19 @@ contract WalletSimple {
     */
     function verifySigner() public {
         require(signers[msg.sender].allowed, "Only allowed signer can verify themselves");
-        signers[msg.sender].verified;
-        Verified(msg.sender);
+        signers[msg.sender].verified = true;
+        emit Verified(msg.sender);
     }
     /**
     * @dev functionality to replace an old signer with a new signer
     * @param _oldSigner signer addresss of the old signer
     * @param _newSigner signer addresss of the new signer
-    * @param expireTime the number of seconds since 1970 for which this transaction is valid
-    * @param sequenceId the unique sequence id obtainable from getNextSequenceId
-    * @param signature see Data Formats
+    * @param _expireTime the number of seconds since 1970 for which this transaction is valid
+    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
+    * @param _signature see Data Formats
     */
     function transferSignership(
-        address _oldSigner, 
+        address _oldSigner,
         address _newSigner,
         uint256 _expireTime,
         uint256 _sequenceId,
@@ -121,14 +121,15 @@ contract WalletSimple {
     ) public onlySigner {
         // Verify the other signer
         bytes32 operationHash = keccak256(abi.encodePacked("XFERSIGN", _oldSigner, _newSigner, _expireTime, _sequenceId));
-        address otherSigner = verifyMultiSig(address(this), operationHash, _expireTime, _sequenceId, _signature);
-   
+        verifyMultiSig(address(this), operationHash, _expireTime, _sequenceId, _signature);
+
         _transferSignership(_oldSigner, _newSigner);
     }
 
     /**
     * @dev Transfers control of the contract to a newOwner.
-    * @param newOwner The address to transfer ownership to.
+    * @param _oldSigner is the address of the existing signer
+    * @param _newSigner The address to include in the signer list.
     */
     function _transferSignership(address _oldSigner, address _newSigner) internal {
         // disallow old signer
@@ -145,19 +146,22 @@ contract WalletSimple {
     * Create a new contract  (and also address) that forwards funds to this contract
     * returns address of newly created forwarder address
     */
-    function createForwarder() public returns (address) {
-        return new Forwarder();
+    function createForwarder() public {
+        forwardContract = new Forwarder();
+        forwarderAddress[forwardContract] = true;
+        addressId +=1;
+        emit ForwardContract(forwardContract,addressId,block.number,msg.sender);
     }
 
     /**
     * Execute a multi-signature transaction from this wallet using 2 signers: one from msg.sender and the other from ecrecover.
     *
-    * @param toAddress the destination address to send an outgoing transaction
-    * @param value the amount in Wei to be sent
-    * @param data the data to send to the toAddress when invoking the transaction
-    * @param expireTime the block number until which this transaction is valid
-    * @param sequenceId the unique sequence id obtainable from getNextSequenceId
-    * @param signature see Data Formats
+    * @param _toAddress the destination address to send an outgoing transaction
+    * @param _value the amount in Wei to be sent
+    * @param _data the data to send to the toAddress when invoking the transaction
+    * @param _expireTime the block number until which this transaction is valid
+    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
+    * @param _signature see Data Formats
     */
     function sendMultiSig (
         address _toAddress,
@@ -169,14 +173,13 @@ contract WalletSimple {
     ) public onlySigner {
         // Verify the other signer
         bytes32 operationHash = keccak256(abi.encodePacked("TRANSACT", _toAddress, _value, _data, _expireTime, _sequenceId));
-
-        address otherSigner = verifyMultiSig(_toAddress, operationHash, _expireTime, _sequenceId, _signature);
+        verifyMultiSig(_toAddress, operationHash, _expireTime, _sequenceId, _signature);
 
         // Success, send the transaction
         // .call.value()() is fine here since only signers can call this function and presumably we trust them from re-entrancy
-        require(toAddress.call.value(value)(data), "Transaction send failed");
+        require(_toAddress.call.value(_value)(_data), "Transaction send failed");
         sequenceId += 1;
-        Transacted(msg.sender, otherSigner, operationHash, _toAddress, _value, _data);
+        // Transacted(msg.sender, otherSigner, operationHash, _toAddress, _value, _data);
     }
 
 
@@ -196,7 +199,7 @@ contract WalletSimple {
         uint256 _expireTime,
         uint256 _sequenceId,
         bytes _signature
-    ) private returns (address) {
+    ) private view{
 
         // Verify if we are in safe mode. In safe mode, the wallet can only send to signers or this contract
         if(safeMode && _toAddress != address(this)){
@@ -204,17 +207,15 @@ contract WalletSimple {
             require(signers[_toAddress].allowed, "toAddress not allowed");
             require(signers[_toAddress].verified, "toAddress not verified");
         }
-       
+
         // Verify that the transaction has not expired
-        require(_expireTime > block.number, "Transaction expired");
+        require(_expireTime <= block.number, "Transaction expired");
         require(_sequenceId == sequenceId + 1, "Invalid sequence ID");
         address otherSigner = recoverAddressFromSignature(_operationHash, _signature);
         require(signers[otherSigner].allowed, "otherSigner not allowed");
         require(signers[otherSigner].verified, "otherSigner not verified");
 
         require(otherSigner != msg.sender, "msg.sender cannot double sign");
-  
-        return otherSigner;
     }
 
     /**
@@ -222,7 +223,7 @@ contract WalletSimple {
     */
     function activateSafeMode() public onlySigner {
         safeMode = true;
-        SafeModeActivated(msg.sender);
+        emit SafeModeActivated(msg.sender);
     }
 
     /**
@@ -255,5 +256,46 @@ contract WalletSimple {
 
     function getSequenceId() public view returns (uint256){
         return sequenceId + 1;
+    }
+
+    //getters to hash the message for trasnfer signer
+    // This is to imply consistency in rlp encdoing when the hashing the message using ecsign
+    /**
+    * @dev functionality to get the hash of the transfer message format
+    * @param _oldSigner signer addresss of the old signer
+    * @param _newSigner signer addresss of the new signer
+    * @param _expireTime the number of seconds since 1970 for which this transaction is valid
+    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
+    * @return hash of the transfer message using keccak256
+    */
+    function signTransfer(
+        address _oldSigner,
+        address _newSigner,
+        uint256 _expireTime,
+        uint256 _sequenceId
+    ) public pure returns(bytes32) {
+        // hash the message
+        return keccak256(abi.encodePacked("XFERSIGN", _oldSigner, _newSigner, _expireTime, _sequenceId));
+    }
+
+     /**
+    * functionality to get the hash of the send transaction message
+    *
+    * @param _toAddress the destination address to send an outgoing transaction
+    * @param _value the amount in Wei to be sent
+    * @param _data the data to send to the toAddress when invoking the transaction
+    * @param _expireTime the block number until which this transaction is valid
+    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
+    * @return hash of the transfer message using keccak256
+    */
+    function signSendMultiSig (
+        address _toAddress,
+        uint _value,
+        bytes _data,
+        uint _expireTime,
+        uint _sequenceId
+    ) public pure returns(bytes32) {
+        // hash the message
+        return keccak256(abi.encodePacked("TRANSACT", _toAddress, _value, _data, _expireTime, _sequenceId));
     }
 }
