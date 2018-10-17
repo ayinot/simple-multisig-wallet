@@ -1,0 +1,26 @@
+{
+  "name": "simple-multisig-wallet",
+  "version": "1.0.0",
+  "description": "simple-mutlisig-wallet requires multiple signers to sign before spending funds from the contract. ",
+  "main": "truffle-config.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "truffle test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ToniyaSundaram/simple-mutlisig-wallet.git"
+  },
+  "author": "Terry Wilkinson",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ToniyaSundaram/simple-mutlisig-wallet/issues"
+  },
+  "homepage": "https://github.com/ToniyaSundaram/simple-mutlisig-wallet#readme",
+  "dependencies": {
+    "chai": "^4.2.0",
+    "ethereumjs-util": "^6.0.0"
+  }
+}
