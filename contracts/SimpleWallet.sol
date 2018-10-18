@@ -7,7 +7,10 @@ import "./Forwarder.sol";
 * ============
 *
 * Basic multi-signer wallet designed for use in a co-signing environment where 2 signatures are required to move funds.
-* Typically used in a 2-of-3 signing configuration. Uses ecrecover to allow for 2 signatures in a single transaction.
+* Typically used in a 2-of-3 signing configuration, this configuration is 2-of-4, 2 hot accounts (allowed and verified) and 2 cold accounts (allowed). 
+* Uses ecrecover to allow for 2 signatures in a single transaction.
+* If either (or both) of the hot accounts are compromised (or have lost their private keys) one (or both) of the cold accounts 
+*   can be verified (made hot) and used to TransferSignership away from the old compromised accounts to fresh cold accounts.
 *
 * The first signature is created on the operation hash (see Data Formats) and passed to sendMultiSig/sendMultiSigToken
 * The signer is determined by verifyMultiSig().
@@ -21,8 +24,9 @@ import "./Forwarder.sol";
 * Like the eth_sign RPC call, it packs the values as a 65-byte array of [r, s, v].
 * Unlike eth_sign, the message is not prefixed.
 *
-* The operationHash the result of keccak256(prefix, toAddress, value, data, expireTime).
+* The operationHash for ether transactions is the result of keccak256(abi.encode(prefix, toAddress, value, data, expireTime, sequenceId)).
 * For ether transactions, `prefix` is "TRANSACT".
+* The operationHash for transfer signership transactions is the result of keccak256(abi.encode(prefix, oldSigner, newSigner, expireTime, sequenceId)).
 * For Signer transfer transaction, `prefix` is "XFERSIGN".
 *
 *
@@ -30,7 +34,7 @@ import "./Forwarder.sol";
 
 contract SimpleWallet {
     // Events
-    event ForwardContract(address forwardContract,uint256 addressSeq,uint256 currentBlock,address contractOwner);
+    event ForwarderCreate(address forwardContract, uint256 addressSeq, uint256 currentBlock, address parentAddress);
     event Deposited(address from, uint256 value, bytes data);
     event Verified(address msgSender);
     event SafeModeActivated(address msgSender);
@@ -47,17 +51,16 @@ contract SimpleWallet {
 
     // Public fields
     mapping(address => Signer) public signers; // The addresses that can co-sign transactions on the wallet
-    mapping(address => bool) public forwarderAddress; //A map to keep track of the
-
     struct Signer {
         bool allowed; // flag to set when the signing address is allowed
         bool verified; // flag to set when the signing address has verified itself to prove ownership of the account
     }
-
-    bool public safeMode = false; // when active, wallet may only send to signer addresses
-    address public forwardContract; //to store the forwardContract address for the current instance
+    
+    mapping(address => bool) public forwarders; // A map to check if an address is a Forwarder address. A full list of forwarders can be derived from a ForwardContract event log search
     uint256 public addressId; // this keeps tracks of the number of address created for Forwarder contract
-
+    
+    bool public safeMode = false; // when active, wallet may only send to signer addresses
+    
     // Private fields
     uint256 private sequenceId; // the current sequence ID of all transactions on this contract (counts up for every new transaction)
 
@@ -73,6 +76,7 @@ contract SimpleWallet {
         require(_allowedSigners.length == 4, "only 4 signers allowed");
 
         for (uint i = 0; i < _allowedSigners.length; i++) {
+            require(signers[_allowedSigners[i]].allowed != true, "each signer address must be unique");
             signers[_allowedSigners[i]].allowed = true;
         }
     }
@@ -94,7 +98,6 @@ contract SimpleWallet {
             emit Deposited(msg.sender, msg.value, msg.data);
         }
     }
-
 
     /**
     * @dev public function for signers to verify themselves
@@ -119,6 +122,9 @@ contract SimpleWallet {
         uint256 _sequenceId,
         bytes _signature
     ) public onlySigner {
+        
+        require(signers[_newSigner].allowed != true, "_newSigner cannot be an exsisting signer");
+        
         // Verify the other signer
         bytes32 operationHash = keccak256(abi.encodePacked("XFERSIGN", _oldSigner, _newSigner, _expireTime, _sequenceId));
         verifyMultiSig(address(this), operationHash, _expireTime, _sequenceId, _signature);
@@ -147,10 +153,10 @@ contract SimpleWallet {
     * returns address of newly created forwarder address
     */
     function createForwarder() public {
-        forwardContract = new Forwarder();
-        forwarderAddress[forwardContract] = true;
-        addressId +=1;
-        emit ForwardContract(forwardContract,addressId,block.number,msg.sender);
+        Forwarder forwarder = new Forwarder();
+        forwarders[forwarder] = true;
+        addressId += 1;
+        emit ForwarderCreate(forwarder, addressId, block.number, msg.sender);
     }
 
     /**
@@ -199,14 +205,7 @@ contract SimpleWallet {
         uint256 _expireTime,
         uint256 _sequenceId,
         bytes _signature
-    ) private view{
-
-        // Verify if we are in safe mode. In safe mode, the wallet can only send to signers or this contract
-        if(safeMode && _toAddress != address(this)){
-            // We are in safe mode and if the _toAddress is not a signer or not verified. Disallow!
-            require(signers[_toAddress].allowed, "toAddress not allowed");
-            require(signers[_toAddress].verified, "toAddress not verified");
-        }
+    ) private view {
 
         // Verify that the transaction has not expired
         require(_expireTime <= block.number, "Transaction expired");
@@ -214,6 +213,15 @@ contract SimpleWallet {
         address otherSigner = recoverAddressFromSignature(_operationHash, _signature);
         require(signers[otherSigner].allowed, "otherSigner not allowed");
         require(signers[otherSigner].verified, "otherSigner not verified");
+        
+        // Check if we are in safe mode. In safe mode, the wallet can only send to current signers or this contract
+        if(safeMode && _toAddress != address(this)){
+            // We are in safe mode and if the _toAddress is not a signer or not verified. Disallow!
+            require(signers[_toAddress].allowed, "toAddress not allowed");
+            require(signers[_toAddress].verified, "toAddress not verified");
+            // Furthermore to be as safe as possible only the msg.sender or the otherSigner can receive the transaction (because they have proven they still hold their private keys to sign)
+            require(_toAddress == msg.sender || _toAddress == otherSigner, "toAddress was not msg.sender or otherSigner");
+        }
 
         require(otherSigner != msg.sender, "msg.sender cannot double sign");
     }
@@ -228,15 +236,15 @@ contract SimpleWallet {
 
     /**
     * Gets signer's address using ecrecover
-    * @param operationHash see Data Formats
-    * @param signature see Data Formats
+    * @param _operationHash see Data Formats
+    * @param _signature see Data Formats
     * returns address recovered from the signature
     */
     function recoverAddressFromSignature(
-        bytes32 operationHash,
-        bytes signature
+        bytes32 _operationHash,
+        bytes _signature
       ) private pure returns (address) {
-        if (signature.length != 65) {
+        if (_signature.length != 65) {
             revert();
         }
         // We need to unpack the signature, which is given as an array of 65 bytes (like eth.sign)
@@ -244,58 +252,22 @@ contract SimpleWallet {
         bytes32 s;
         uint8 v;
         assembly {
-          r := mload(add(signature, 32))
-          s := mload(add(signature, 64))
-          v := and(mload(add(signature, 65)), 255)
+          r := mload(add(_signature, 32))
+          s := mload(add(_signature, 64))
+          v := and(mload(add(_signature, 65)), 255)
         }
         if (v < 27) {
             v += 27; // Ethereum versions are 27 or 28 as opposed to 0 or 1 which is submitted by some signing libs
         }
-        return ecrecover(operationHash, v, r, s);
+        return ecrecover(_operationHash, v, r, s);
     }
 
+    /**
+    * @dev functionality to get the sequenceId for the next transaction
+    * @return the current sequenceId plus one
+    */
     function getSequenceId() public view returns (uint256){
         return sequenceId + 1;
     }
 
-    //getters to hash the message for trasnfer signer
-    // This is to imply consistency in rlp encdoing when the hashing the message using ecsign
-    /**
-    * @dev functionality to get the hash of the transfer message format
-    * @param _oldSigner signer addresss of the old signer
-    * @param _newSigner signer addresss of the new signer
-    * @param _expireTime the number of seconds since 1970 for which this transaction is valid
-    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
-    * @return hash of the transfer message using keccak256
-    */
-    function signTransfer(
-        address _oldSigner,
-        address _newSigner,
-        uint256 _expireTime,
-        uint256 _sequenceId
-    ) public pure returns(bytes32) {
-        // hash the message
-        return keccak256(abi.encodePacked("XFERSIGN", _oldSigner, _newSigner, _expireTime, _sequenceId));
-    }
-
-     /**
-    * functionality to get the hash of the send transaction message
-    *
-    * @param _toAddress the destination address to send an outgoing transaction
-    * @param _value the amount in Wei to be sent
-    * @param _data the data to send to the toAddress when invoking the transaction
-    * @param _expireTime the block number until which this transaction is valid
-    * @param _sequenceId the unique sequence id obtainable from getNextSequenceId
-    * @return hash of the transfer message using keccak256
-    */
-    function signSendMultiSig (
-        address _toAddress,
-        uint _value,
-        bytes _data,
-        uint _expireTime,
-        uint _sequenceId
-    ) public pure returns(bytes32) {
-        // hash the message
-        return keccak256(abi.encodePacked("TRANSACT", _toAddress, _value, _data, _expireTime, _sequenceId));
-    }
 }
