@@ -7,9 +7,9 @@ import "./Forwarder.sol";
 * ============
 *
 * Basic multi-signer wallet designed for use in a co-signing environment where 2 signatures are required to move funds.
-* Typically used in a 2-of-3 signing configuration, this configuration is 2-of-4, 2 hot accounts (allowed and verified) and 2 cold accounts (allowed). 
+* Typically used in a 2-of-3 signing configuration, this configuration is 2-of-4, 2 hot accounts (allowed and verified) and 2 cold accounts (allowed).
 * Uses ecrecover to allow for 2 signatures in a single transaction.
-* If either (or both) of the hot accounts are compromised (or have lost their private keys) one (or both) of the cold accounts 
+* If either (or both) of the hot accounts are compromised (or have lost their private keys) one (or both) of the cold accounts
 *   can be verified (made hot) and used to TransferSignership away from the old compromised accounts to fresh cold accounts.
 *
 * The first signature is created on the operation hash (see Data Formats) and passed to sendMultiSig/sendMultiSigToken
@@ -55,12 +55,12 @@ contract SimpleWallet {
         bool allowed; // flag to set when the signing address is allowed
         bool verified; // flag to set when the signing address has verified itself to prove ownership of the account
     }
-    
+
     mapping(address => bool) public forwarders; // A map to check if an address is a Forwarder address. A full list of forwarders can be derived from a ForwardContract event log search
     uint256 public addressId; // this keeps tracks of the number of address created for Forwarder contract
-    
+
     bool public safeMode = false; // when active, wallet may only send to signer addresses
-    
+
     // Private fields
     uint256 private sequenceId; // the current sequence ID of all transactions on this contract (counts up for every new transaction)
 
@@ -122,9 +122,9 @@ contract SimpleWallet {
         uint256 _sequenceId,
         bytes _signature
     ) public onlySigner {
-        
+
         require(signers[_newSigner].allowed != true, "_newSigner cannot be an exsisting signer");
-        
+
         // Verify the other signer
         bytes32 operationHash = keccak256(abi.encodePacked("XFERSIGN", _oldSigner, _newSigner, _expireTime, _sequenceId));
         verifyMultiSig(address(this), operationHash, _expireTime, _sequenceId, _signature);
@@ -208,12 +208,12 @@ contract SimpleWallet {
     ) private view {
 
         // Verify that the transaction has not expired
-        require(_expireTime <= block.number, "Transaction expired");
+        require(_expireTime >= block.number, "Transaction expired");
         require(_sequenceId == sequenceId + 1, "Invalid sequence ID");
         address otherSigner = recoverAddressFromSignature(_operationHash, _signature);
         require(signers[otherSigner].allowed, "otherSigner not allowed");
         require(signers[otherSigner].verified, "otherSigner not verified");
-        
+
         // Check if we are in safe mode. In safe mode, the wallet can only send to current signers or this contract
         if(safeMode && _toAddress != address(this)){
             // We are in safe mode and if the _toAddress is not a signer or not verified. Disallow!
