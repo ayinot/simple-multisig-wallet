@@ -56,7 +56,7 @@ contract SimpleWallet {
         bool verified; // flag to set when the signing address has verified itself to prove ownership of the account
     }
 
-    mapping(address => bool) public forwarders; // A map to check if an address is a Forwarder address. A full list of forwarders can be derived from a ForwardContract event log search
+    mapping(uint256 => address) public forwarders; // A map to check if an address is a Forwarder address. A full list of forwarders can be derived from a ForwardContract event log search
     uint256 public addressId; // this keeps tracks of the number of address created for Forwarder contract
 
     bool public safeMode = false; // when active, wallet may only send to signer addresses
@@ -155,7 +155,7 @@ contract SimpleWallet {
     */
     function createForwarder() public {
         Forwarder forwarder = new Forwarder();
-        forwarders[forwarder] = true;
+        forwarders[addressId] = forwarder;
         addressId += 1;
         emit ForwarderCreate(forwarder, addressId, block.number, msg.sender);
     }
