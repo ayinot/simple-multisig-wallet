@@ -104,6 +104,7 @@ contract SimpleWallet {
     */
     function verifySigner() public {
         require(signers[msg.sender].allowed, "Only allowed signer can verify themselves");
+        require(signers[msg.sender].verified = false, "Signer account already verified");
         signers[msg.sender].verified = true;
         emit Verified(msg.sender);
     }
