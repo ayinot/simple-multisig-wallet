@@ -10,7 +10,7 @@ Prerequisite
 ```
 npm -v
 ```
-2. truffle and ganache
+2. Install truffle and ganache globally 
 
 3. Install
 -------------
