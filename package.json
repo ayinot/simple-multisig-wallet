@@ -29,6 +29,7 @@
     "ethers": "^4.0.7",
     "keythereum": "^1.0.4",
     "truffle-assertions": "^0.6.2",
+    "typedarray-to-buffer": "^3.1.5",
     "web3": "^1.0.0-beta.36"
   }
 }

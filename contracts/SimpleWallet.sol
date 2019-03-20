@@ -138,7 +138,7 @@ contract SimpleWallet {
         bytes32 operationHash = keccak256(abi.encodePacked("XFERSIGN", oldSigner, newSigner, expireTime, sequenceId));
         address otherSigner = verifyMultiSig(address(this), operationHash, expireTime, sequenceId, signature);
 
-        _transferSignership(oldSigner, otherSigner, newSigner);
+        _transferSignership(oldSigner, newSigner, newSigner);
     }
 
     /**
