@@ -1,7 +1,6 @@
 const ethUtil = require('ethereumjs-util');
 const keythereum = require("keythereum");
 require('dotenv').load();
-const BN = require('bn.js');
 let Web3 = require("web3");
 
 let web3 = new Web3("https://ropsten.infura.io/qe93eRW1ZLx44WsdN2wh");

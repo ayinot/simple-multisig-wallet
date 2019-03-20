@@ -1,4 +1,4 @@
-pragma solidity ^0.5.3;
+pragma solidity ^0.5.0;
 
 import "./Forwarder.sol";
 import "./IERC20.sol";
@@ -189,9 +189,14 @@ contract SimpleWallet {
 
         // Success, send the transaction
         // .call.value()() is fine here since only signers can call this function and presumably we trust them from re-entrancy
-        require(toAddress.call.value(value)(data), "Transaction send failed");
+        (bool success, bytes memory returnData) = toAddress.call.value(value)(data);
+        
+        if (!success) {
+        // Failed executing transaction
+            revert();
+        }
         _sequenceId += 1;
-        emit Transacted(msg.sender, otherSigner, operationHash, toAddress, value, data);
+        emit Transacted(msg.sender, otherSigner, "TRANSACT",operationHash, toAddress, value, data);
     }
 
     /**
@@ -214,7 +219,7 @@ contract SimpleWallet {
         bytes memory signature
     ) public onlySigner {
         // Verify the other signer
-        var operationHash = keccak256("ERC20", toAddress, value, tokenContractAddress, expireTime, sequenceId);
+        bytes32 operationHash = keccak256(abi.encodePacked("ERC20", toAddress, value, tokenContractAddress, expireTime, sequenceId));
         
         address otherSigner = verifyMultiSig(toAddress, operationHash, expireTime, sequenceId, signature);
         
@@ -222,7 +227,7 @@ contract SimpleWallet {
         if (!instance.transfer(toAddress, value)) {
             revert();
         }
-        emit ERC20Sent(msg.sender, otherSigner, operationHash, toAddress, value, tokenContractAddress);
+        emit ERC20Sent(msg.sender, otherSigner, "ERC20" ,operationHash, toAddress, value, tokenContractAddress);
     }
 
     /**
