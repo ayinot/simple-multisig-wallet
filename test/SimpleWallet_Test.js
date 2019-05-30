@@ -1,9 +1,8 @@
 let Web3 = require("web3");
-let web3 = new Web3("http://127.0.0.1:8545");
-const truffleAssert = require('truffle-assertions');
-const ethUtil = require('ethereumjs-util');
+let web3 = new Web3(new Web3.providers.WebsocketProvider('http://127.0.0.1:7545'));
 const helpers = require('./helpers');
 const assert = require("chai").assert;
+const truffleAssert = require('truffle-assertions');
 require('chai')
     .use(require('chai-as-promised'))
     .should();
@@ -12,14 +11,14 @@ require('chai')
 let SimpleWallet = artifacts.require("./SimpleWallet.sol");
 
 contract('Multisig wallet', function (accounts) {
-    const privateKey = "0xc0cc5aaa4452920817bcdc682ee3dc3028e24c3a7c18b4382f3a4f5e09411a36"
+    const privateKey = "0xd639d44ab9e1c204b8e2dc6e11c32146eadad21353c4eee72a3ee683c63d9ada"
     let walletInstance;
     let forwarderAddress;
     let blockNumber;
     let package1 = 45;
     let package2 = 55;
 
-    describe('Test simple wallet', async function(){
+    describe('Test simple wallet', async function() {
 
         before('Should create a contract',async function () {
             walletInstance = await SimpleWallet.new([accounts[0],accounts[1],accounts[2],accounts[3]]);
@@ -33,8 +32,12 @@ contract('Multisig wallet', function (accounts) {
         })
 
         it('Should Create forwarder', async function() {
-            await walletInstance.createForwarder()
-            forwarderAddress = await walletInstance.forwarders.call(0);
+            let tx = await walletInstance.createForwarder()
+            truffleAssert.eventEmitted(tx, 'ForwarderCreate', (ev) => {
+                forwarderAddress = ev[0];
+                return ev.forwardContract ;
+                
+            });            
         })
 
         it('Should Transfer signerShip accounts[3] to accounts[4] ', async function() {
@@ -138,8 +141,12 @@ contract('Multisig wallet', function (accounts) {
         })
 
         it('Should Create forwarder', async function() {
-            await walletInstance.createForwarder()
-            forwarderAddress = await walletInstance.forwarders.call(0);
+            let tx = await walletInstance.createForwarder()
+            truffleAssert.eventEmitted(tx, 'ForwarderCreate', (ev) => {
+                forwarderAddress = ev[0];
+                return ev.forwardContract ;
+                
+            });            
         })
 
         it('Should send money to Forwarder contract address', async function() {
