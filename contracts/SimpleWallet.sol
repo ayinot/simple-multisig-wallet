@@ -189,7 +189,7 @@ contract SimpleWallet {
 
         // Success, send the transaction
         // .call.value()() is fine here since only signers can call this function and presumably we trust them from re-entrancy
-        (bool success, bytes memory returnData) = toAddress.call.value(value)(data);
+        (bool success, ) = toAddress.call.value(value)(data);
         
         if (!success) {
         // Failed executing transaction
